@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Radar · ativação</title>
+<style>
+:root{--bg:#f5f6f2;--fg:#1d2721;--muted:#5b675f;--line:#d6ddd5;--card:#fff;--accent:#2c7552;--warn:#9a5b00;--bad:#b42318;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#121815;--fg:#e5ebe7;--muted:#97a59c;--line:#2a342f;--card:#19211d;--accent:#5cc08c;--warn:#e0a526;--bad:#f97066;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{width:min(560px,100%);background:var(--card);border:1px solid var(--line);border-radius:12px;padding:28px 26px;display:grid;gap:14px}
+h1{margin:0;font-size:1.35rem;line-height:1.25}
+p{margin:0}.muted{color:var(--muted);font-size:.92rem}
+.codigo{font:600 1.7rem ui-monospace,Consolas,monospace;letter-spacing:.12em;text-align:center;padding:14px;border:2px dashed var(--accent);border-radius:10px;user-select:all}
+button{font:inherit;font-weight:600;padding:11px 16px;border-radius:8px;border:0;background:var(--accent);color:var(--bg);cursor:pointer}
+button:disabled{opacity:.6;cursor:default}
+.aviso{border-left:4px solid var(--warn);padding:8px 12px;background:color-mix(in srgb,var(--warn) 9%,transparent);font-size:.92rem}
+.erro{border-left-color:var(--bad);background:color-mix(in srgb,var(--bad) 9%,transparent)}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main id="caixa" aria-live="polite">
+  <h1 id="titulo">Abrindo…</h1>
+  <div id="corpo"><p class="muted">Aguarde um instante.</p></div>
+</main>
+<script>
+// Tudo dentro de uma função: ao trocar o documento pelo relatório, nada daqui pode sobrar como variável
+// global (o relatório declara const esc, etc.; um nome repetido o derrubaria com "already been declared").
+(() => {
+const PACOTE = null;
+const CHAVE = "radar-codigo";
+const CODIGO_ABERTO = "RADARLIVRE";   // arquivo sem vínculo com o navegador: só a validade vale
+const VISTO = "radar-visto";   // o maior instante já visto neste navegador: voltar o relógio não "ressuscita" o arquivo
+const ALFABETO = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";   // sem 0/O, 1/I/L: o código é lido e digitado por gente
+const enc = new TextEncoder();
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const normalizar = c => String(c || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+const formatar = c => normalizar(c).replace(/(.{4})(?=.)/g, "$1-");
+const bytes = b64 => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+
+// O título da aba também diz em que tela estamos ("Radar · …"); só o relatório aberto tem o título "Radar de imóveis".
+function tela(titulo, html) { $("titulo").textContent = titulo; document.title = "Radar · " + titulo; $("corpo").innerHTML = html; }
+
+// Código deste navegador: criado na 1ª abertura e guardado. Se o navegador bloquear o armazenamento,
+// avisa em vez de gerar um código diferente a cada abertura (que o Bruno nunca conseguiria cadastrar).
+function codigoDoNavegador() {
+  try {
+    let c = localStorage.getItem(CHAVE);
+    if (!c) {
+      const a = new Uint8Array(12); crypto.getRandomValues(a);
+      c = [...a].map(x => ALFABETO[x % ALFABETO.length]).join("");
+      localStorage.setItem(CHAVE, c);
+    }
+    return {codigo: c};
+  } catch (e) { return {erro: true}; }
+}
+
+// Hora da internet, só para conferir o relógio do computador. Sem rede (ou se o serviço falhar) devolve null
+// e vale o resto; nenhum dado do corretor é enviado (é um GET simples, sem cookies).
+async function horaDaRede() {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 2500);
+  try {
+    const r = await fetch("https://worldtimeapi.org/api/timezone/Etc/UTC", {signal: ctl.signal, cache: "no-store", credentials: "omit"});
+    const ms = Number((await r.json()).unixtime) * 1000;
+    return ms > Date.parse("2026-01-01") && ms < Date.parse("2100-01-01") ? ms : null;
+  } catch (e) { return null; } finally { clearTimeout(t); }
+}
+
+function telaAtivacao(codigo, motivo) {
+  tela("Ative este navegador", `
+    ${motivo ? `<p class="aviso">${motivo}</p>` : ""}
+    <p>Mande o código abaixo ao Bruno (WhatsApp). Ele libera o seu acesso e passa a mandar os arquivos já preparados para este navegador.</p>
+    <div class="codigo" id="cod">${esc(formatar(codigo))}</div>
+    <button type="button" id="copiar">Copiar código</button>
+    <p class="muted">Use sempre o <b>mesmo navegador</b> (Chrome ou Edge) para abrir os arquivos. Se trocar de navegador, de computador ou apagar os dados de navegação, o código muda e será preciso pedir um novo.</p>`);
+  $("copiar").onclick = async () => {
+    try { await navigator.clipboard.writeText(formatar(codigo)); } catch (e) { const r = document.createRange(); r.selectNodeContents($("cod")); getSelection().removeAllRanges(); getSelection().addRange(r); document.execCommand("copy"); }
+    $("copiar").textContent = "Copiado ✓";
+  };
+}
+
+async function chaveDoCodigo(codigo) {
+  const base = await crypto.subtle.importKey("raw", enc.encode(normalizar(codigo)), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({name: "PBKDF2", salt: bytes(PACOTE.s), iterations: PACOTE.i, hash: "SHA-256"}, base,
+    {name: "AES-GCM", length: 256}, false, ["decrypt"]);
+}
+
+async function abrir() {
+  if (!window.crypto || !crypto.subtle) {
+    return tela("Navegador sem suporte", `<p class="aviso erro">Este navegador não consegue abrir o arquivo. Use o Chrome ou o Edge, atualizados.</p>`);
+  }
+  const cab = PACOTE ? JSON.parse(PACOTE.h) : {};
+  const nav = cab.aberto ? {codigo: CODIGO_ABERTO} : codigoDoNavegador();
+  if (nav.erro) {
+    return tela("Navegador bloqueou o armazenamento", `<p class="aviso erro">Não foi possível guardar o código deste navegador (janela anônima ou bloqueio de dados do site). Abra o arquivo numa janela normal do Chrome ou do Edge.</p>`);
+  }
+  if (!PACOTE) return telaAtivacao(nav.codigo);              // arquivo de ativação
+  let chaveBruta;
+  try {
+    chaveBruta = await crypto.subtle.decrypt({name: "AES-GCM", iv: bytes(PACOTE.ik), additionalData: enc.encode("radar-k")},
+      await chaveDoCodigo(nav.codigo), bytes(PACOTE.k));
+  } catch (e) {   // código deste navegador não é o do arquivo
+    return telaAtivacao(nav.codigo, "Este arquivo foi preparado para outro navegador e não abre aqui. Mande o código abaixo ao Bruno para receber o seu.");
+  }
+  // "Agora" é o maior entre: relógio do computador, hora da internet (se houver) e o maior instante já visto aqui.
+  // Voltar o calendário do Windows, portanto, não adianta depois que o arquivo já foi aberto uma vez depois
+  // do vencimento ou com internet; só um computador sempre offline com o relógio atrasado desde o início escapa.
+  const local = Date.now();
+  const rede = await horaDaRede();
+  let visto = 0; try { visto = Number(localStorage.getItem(VISTO)) || 0; } catch (e) {}
+  const agora = Math.max(local, rede || 0, visto);
+  try { localStorage.setItem(VISTO, String(agora)); } catch (e) {}
+  if (agora > Date.parse(cab.valido_ate)) {
+    const atrasado = agora - local > 10 * 60 * 1000;
+    return tela("Este arquivo venceu", `<p class="aviso">Era válido até <b>${esc(cab.valido_ate_texto)}</b>. Peça o arquivo atualizado ao Bruno.</p>
+      ${atrasado ? `<p class="aviso">A data e a hora deste computador parecem atrasadas. Acertar o relógio não renova o arquivo.</p>` : ""}
+      <p class="muted">Gerado em ${esc(cab.gerado_em)} para ${esc(cab.corretor)}.</p>`);
+  }
+  try {
+    const chave = await crypto.subtle.importKey("raw", chaveBruta, "AES-GCM", false, ["decrypt"]);
+    // o cabeçalho (nome, datas, validade) é autenticado: alterá-lo no arquivo faz esta etapa falhar
+    const claro = await crypto.subtle.decrypt({name: "AES-GCM", iv: bytes(PACOTE.iv), additionalData: enc.encode(PACOTE.h)}, chave, bytes(PACOTE.c));
+    const html = await new Response(new Blob([claro]).stream().pipeThrough(new DecompressionStream("deflate"))).text();
+    document.open(); document.write(html); document.close();
+  } catch (e) {
+    tela("Arquivo danificado", `<p class="aviso erro">O arquivo está incompleto ou foi alterado. Baixe-o de novo; se continuar, peça outro ao Bruno.</p>`);
+  }
+}
+abrir();
+})();
+</script>
+</body>
+</html>
